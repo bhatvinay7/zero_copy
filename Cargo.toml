@@ -1,0 +1,14 @@
+[workspace]
+members = [
+  "apps/http-server",
+  "apps/transcoder",
+  "apps/worker",
+  "apps/db-worker",
+  "apps/tus-server",
+  "apps/merger",
+  "packages/db",
+  "packages/redis-conn",
+  "packages/rabbitmq-conn",
+  "packages/s3-conn"
+]
+resolver = "2"
