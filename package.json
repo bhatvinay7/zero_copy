@@ -1,0 +1,35 @@
+{
+  "name": "transcoder",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "check-types": "turbo run check-types",
+    "cargo:check": "cargo check --workspace",
+    "cargo:build": "cargo build --release --workspace",
+    "db:migrate": "cargo run -p db --bin migrate",
+    "docker:build": "docker compose build",
+    "docker:build:http-server": "docker build --file docker/http-server.Dockerfile --tag transcoder/http-server:latest .",
+    "docker:build:transcoder": "docker build --file docker/transcoder.Dockerfile --tag transcoder/transcoder:latest .",
+    "docker:build:db-worker": "docker build --file docker/db-worker.Dockerfile --tag transcoder/db-worker:latest .",
+    "docker:build:worker": "docker build --file docker/worker.Dockerfile --tag transcoder/worker:latest .",
+    "docker:build:tus-server": "docker build --file docker/tus-server.Dockerfile --tag transcoder/tus-server:latest .",
+    "docker:build:migrate": "docker build --file docker/db-migrate.Dockerfile --tag transcoder/db-migrate:latest .",
+    "docker:up": "docker compose up",
+    "docker:down": "docker compose down"
+  },
+  "devDependencies": {
+    "prettier": "^3.7.4",
+    "turbo": "^2.10.5",
+    "typescript": "5.9.2"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}

@@ -1,0 +1,33 @@
+# Rust build artifacts (huge - must exclude)
+target/
+**/target/
+
+# JS/Node artifacts
+node_modules/
+.turbo/
+
+# Git
+.git/
+.gitignore
+
+# JS/TS-only apps (not needed for Rust Docker builds)
+apps/docs/
+apps/web/
+
+# JS-only packages
+packages/eslint-config/
+packages/typescript-config/
+packages/ui/
+
+# Secrets and config
+.env
+.env.*
+
+# Docs
+*.md
+README*
+
+# Lock files for JS (Rust uses its own Cargo.lock)
+bun.lock
+package-lock.json
+yarn.lock
