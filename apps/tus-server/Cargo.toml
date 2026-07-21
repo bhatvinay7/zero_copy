@@ -1,0 +1,26 @@
+[package]
+name    = "tus-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum         = { version = "0.7", features = ["macros", "multipart"] }
+tower        = { version = "0.4", features = ["full"] }
+tower-http   = { version = "0.5", features = ["cors", "trace"] }
+tokio        = { version = "1.38", features = ["full"] }
+serde        = { version = "1.0", features = ["derive"] }
+rustls = { version = "0.23.42", features = ["ring"] }
+serde_json   = "1.0"
+anyhow       = "1.0"
+uuid         = { version = "1.8", features = ["v4"] }
+base64       = "0.22"
+chrono       = { version = "0.4", features = ["serde"] }
+log          = "0.4"
+env_logger   = "0.11"
+aws-config   = "1.1"
+aws-sdk-s3   = "1.38"
+# Workspace packages
+db            = { path = "../../packages/db" }
+redis-conn    = { path = "../../packages/redis-conn" }
+rabbitmq-conn = { path = "../../packages/rabbitmq-conn" }
+s3-conn = { path = "../../packages/s3-conn" }
