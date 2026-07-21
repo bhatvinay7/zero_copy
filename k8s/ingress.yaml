@@ -1,0 +1,65 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Ingress — NGINX Ingress Controller
+#
+# Routes:
+#   /          → http-server  (API + Socket.io)
+#   /files/*   → tus-server   (TUS resumable uploads — independently scalable)
+#
+# Install NGINX Ingress Controller:
+#   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: transcoder-ingress
+  namespace: transcoder
+  annotations:
+    # NGINX Ingress class
+    kubernetes.io/ingress.class: nginx
+
+    # ── TUS-specific settings ─────────────────────────────────────────────────
+    # Disable request buffering for TUS PATCH uploads (stream directly to pod)
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    # Allow large upload chunks (5 GiB per PATCH)
+    nginx.ingress.kubernetes.io/proxy-body-size: "5g"
+    # Extended timeouts for long-running upload connections
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+
+    # ── TLS / HTTPS ───────────────────────────────────────────────────────────
+    # cert-manager auto-provisioned certificate (remove if not using cert-manager)
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
+    # ── CORS passthrough ──────────────────────────────────────────────────────
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PATCH, HEAD, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type, Upload-Length, Upload-Metadata, Upload-Offset, Tus-Resumable"
+    nginx.ingress.kubernetes.io/cors-expose-headers: "Location, Upload-Offset, Upload-Length, Tus-Resumable, Tus-Version, Tus-Extension, Tus-Max-Size"
+spec:
+  tls:
+    - hosts:
+        - api.transcoder.example.com
+      secretName: transcoder-tls
+  rules:
+    - host: api.transcoder.example.com
+      http:
+        paths:
+          # TUS upload routes → tus-server (independently scalable, no sticky sessions)
+          - path: /files
+            pathType: Prefix
+            backend:
+              service:
+                name: tus-server
+                port:
+                  number: 1081
+
+          # All other routes → http-server (auth, videos, R2, Socket.io)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: http-server
+                port:
+                  number: 80

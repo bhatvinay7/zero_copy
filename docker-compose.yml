@@ -1,0 +1,160 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Docker Compose — Transcoder Monorepo
+#
+# All images are built from the REPO ROOT so local packages/ are in context.
+# cargo-chef is used in every Rust Dockerfile for dependency-layer caching.
+# cache_from pulls the last built image so the `cargo chef cook` layer is
+# reused on subsequent builds — only changed source files are recompiled.
+#
+# Requires BuildKit (enabled by default in Docker 23+). To force it:
+#   DOCKER_BUILDKIT=1 docker compose build
+#
+# Build all:                 docker compose build
+# Build one service:         docker compose build tus-server
+# Run all:                   docker compose up
+# Scale tus-server:          docker compose up --scale tus-server=3
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: transcoder
+
+services:
+
+  # ── DB Migration (one-shot init container) ───────────────────────────────────
+  # Runs Diesel migrations then exits (code 0).
+  # http-server and tus-server both depend_on this completing first.
+  db-migrate:
+    build:
+      context: .
+      dockerfile: docker/db-migrate.Dockerfile
+      cache_from:
+        - transcoder/db-migrate:latest
+    image: transcoder/db-migrate:latest
+    container_name: db-migrate
+    restart: "no"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+
+  # ── HTTP API Server ──────────────────────────────────────────────────────────
+  # Handles: auth, R2 multipart signing, video events, Socket.io
+  http-server:
+    build:
+      context: .
+      dockerfile: docker/http-server.Dockerfile
+      cache_from:
+        - transcoder/http-server:latest
+    image: transcoder/http-server:latest
+    container_name: http-server
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - RUST_LOG=info
+      - HTTP_PORT=3001
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - CLOUDFLARE_R2_ACCOUNT_ID=${CLOUDFLARE_R2_ACCOUNT_ID}
+      - CLOUDFLARE_R2_ACCESS_KEY_ID=${CLOUDFLARE_R2_ACCESS_KEY_ID}
+      - CLOUDFLARE_R2_SECRET_ACCESS_KEY=${CLOUDFLARE_R2_SECRET_ACCESS_KEY}
+      - CLOUDFLARE_R2_BUCKET=${CLOUDFLARE_R2_BUCKET}
+      - CLOUDFLARE_R2_PUBLIC_URL=${CLOUDFLARE_R2_PUBLIC_URL}
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+
+  # ── TUS Upload Server — independently scalable ───────────────────────────────
+  # Handles: TUS 1.0.0 resumable uploads → Cloudflare R2 → RabbitMQ job
+  #
+  # Scale horizontally:
+  #   docker compose up --scale tus-server=3
+  #
+  # Direct connection on port 1081.
+  tus-server:
+    build:
+      context: .
+      dockerfile: docker/tus-server.Dockerfile
+      cache_from:
+        - transcoder/tus-server:latest
+    image: transcoder/tus-server:latest
+    # no `container_name` — allows multiple replicas
+    restart: unless-stopped
+    ports:
+      - "1081:1081"      # public TUS endpoint (direct connection)
+    environment:
+      - RUST_LOG=info
+      - TUS_PORT=1081
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - CLOUDFLARE_R2_ACCOUNT_ID=${CLOUDFLARE_R2_ACCOUNT_ID}
+      - CLOUDFLARE_R2_ACCESS_KEY_ID=${CLOUDFLARE_R2_ACCESS_KEY_ID}
+      - CLOUDFLARE_R2_SECRET_ACCESS_KEY=${CLOUDFLARE_R2_SECRET_ACCESS_KEY}
+      - CLOUDFLARE_R2_BUCKET=${CLOUDFLARE_R2_BUCKET}
+      - CLOUDFLARE_R2_PUBLIC_URL=${CLOUDFLARE_R2_PUBLIC_URL}
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+
+  # ── Transcoder Worker ────────────────────────────────────────────────────────
+  transcoder:
+    build:
+      context: .
+      dockerfile: docker/transcoder.Dockerfile
+      cache_from:
+        - transcoder/transcoder:latest
+    image: transcoder/transcoder:latest
+    container_name: transcoder
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=info
+      - REDIS_URL=${REDIS_URL}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - CLOUDFLARE_R2_ACCOUNT_ID=${CLOUDFLARE_R2_ACCOUNT_ID}
+      - CLOUDFLARE_R2_ACCESS_KEY_ID=${CLOUDFLARE_R2_ACCESS_KEY_ID}
+      - CLOUDFLARE_R2_SECRET_ACCESS_KEY=${CLOUDFLARE_R2_SECRET_ACCESS_KEY}
+      - CLOUDFLARE_R2_BUCKET=${CLOUDFLARE_R2_BUCKET}
+      - CLOUDFLARE_R2_PUBLIC_URL=${CLOUDFLARE_R2_PUBLIC_URL}
+    depends_on:
+      - http-server
+
+  # ── DB Worker (queue → database) ─────────────────────────────────────────────
+  db-worker:
+    build:
+      context: .
+      dockerfile: docker/db-worker.Dockerfile
+      cache_from:
+        - transcoder/db-worker:latest
+    image: transcoder/db-worker:latest
+    container_name: db-worker
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=info
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+
+  # ── Worker ───────────────────────────────────────────────────────────────────
+  # NOTE: tokio-uring is Linux-only. Build on Linux only.
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+      cache_from:
+        - transcoder/worker:latest
+    image: transcoder/worker:latest
+    container_name: worker
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=info
+      - REDIS_URL=${REDIS_URL}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - CLOUDFLARE_R2_ACCOUNT_ID=${CLOUDFLARE_R2_ACCOUNT_ID}
+      - CLOUDFLARE_R2_ACCESS_KEY_ID=${CLOUDFLARE_R2_ACCESS_KEY_ID}
+      - CLOUDFLARE_R2_SECRET_ACCESS_KEY=${CLOUDFLARE_R2_SECRET_ACCESS_KEY}
+      - CLOUDFLARE_R2_BUCKET=${CLOUDFLARE_R2_BUCKET}
+      - CLOUDFLARE_R2_PUBLIC_URL=${CLOUDFLARE_R2_PUBLIC_URL}
+    depends_on:
+      - http-server
