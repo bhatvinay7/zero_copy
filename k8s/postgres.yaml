@@ -1,0 +1,95 @@
+# ── PostgreSQL StatefulSet ────────────────────────────────────────────────────
+# NOTE: For production workloads consider using Neon (serverless Postgres),
+#       CloudNativePG operator, or managed RDS/Cloud SQL instead.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: transcoder
+  labels:
+    app: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_DB
+              value: neondb
+            - name: POSTGRES_USER
+              value: neondb_owner
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "neondb_owner", "-d", "neondb"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "neondb_owner", "-d", "neondb"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+---
+# ── Postgres password secret (separate from main secret for rotation) ─────────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: transcoder
+type: Opaque
+data:
+  # echo -n "your-postgres-password" | base64
+  POSTGRES_PASSWORD: <base64-encoded-postgres-password>
+---
+# ── PostgreSQL Service (ClusterIP — internal only) ────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: transcoder
+  labels:
+    app: postgres
+spec:
+  clusterIP: None          # Headless for StatefulSet DNS
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres

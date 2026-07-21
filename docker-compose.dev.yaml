@@ -1,0 +1,52 @@
+services:
+
+ 
+  # ── TUS Upload Server — independently scalable ───────────────────────────────
+  # Handles: TUS 1.0.0 resumable uploads → Cloudflare R2 → RabbitMQ job
+  #
+  # Scale horizontally:
+  #   docker compose up --scale tus-server=3
+  #
+  # Direct connection on port 1081.
+  tus-server:
+    build:
+      context: .
+      dockerfile: docker/tus-server.Dockerfile
+    image: transcoder/tus-server:latest
+    # no `container_name` — allows multiple replicas
+    restart: unless-stopped
+    ports:
+      - "1081:1081"      # public TUS endpoint (direct connection)
+    env_file: apps/tus-server/.env
+    environment:
+      - RUST_LOG=info
+      - TUS_PORT=1081
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      - CLOUDFLARE_R2_ACCOUNT_ID=${CLOUDFLARE_R2_ACCOUNT_ID}
+      - CLOUDFLARE_R2_ACCESS_KEY_ID=${CLOUDFLARE_R2_ACCESS_KEY_ID}
+      - CLOUDFLARE_R2_SECRET_ACCESS_KEY=${CLOUDFLARE_R2_SECRET_ACCESS_KEY}
+      - CLOUDFLARE_R2_BUCKET=${CLOUDFLARE_R2_BUCKET}
+      - CLOUDFLARE_R2_PUBLIC_URL=${CLOUDFLARE_R2_PUBLIC_URL}
+    # depends_on:
+    #   db-migrate:
+    #     condition: service_completed_successfully
+
+  # ── Transcoder Worker ────────────────────────────────────────────────────────
+  # transcoder:
+  #   build:
+  #     context: .
+  #     dockerfile: docker/transcoder.Dockerfile
+  #   image: transcoder/transcoder:latest
+  #   container_name: transcoder
+  #   restart: unless-stopped
+  #   environment:
+  #     - RUST_LOG=info
+  #     - REDIS_URL=${REDIS_URL}
+  #     - RABBITMQ_URL=${RABBITMQ_URL}
+  #     - CLOUDFLARE_R2_ACCOUNT_ID=${CLOUDFLARE_R2_ACCOUNT_ID}
+  #     - CLOUDFLARE_R2_ACCESS_KEY_ID=${CLOUDFLARE_R2_ACCESS_KEY_ID}
+  #     - CLOUDFLARE_R2_SECRET_ACCESS_KEY=${CLOUDFLARE_R2_SECRET_ACCESS_KEY}
+  #     - CLOUDFLARE_R2_BUCKET=${CLOUDFLARE_R2_BUCKET}
+  #     - CLOUDFLARE_R2_PUBLIC_URL=${CLOUDFLARE_R2_PUBLIC_URL}

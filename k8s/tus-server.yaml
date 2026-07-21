@@ -1,0 +1,128 @@
+# ── tus-server Deployment ─────────────────────────────────────────────────────
+# Independently scalable — no sticky sessions needed (state in Redis).
+# Scale: kubectl scale deployment tus-server --replicas=5 -n transcoder
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tus-server
+  namespace: transcoder
+  labels:
+    app: tus-server
+spec:
+  replicas: 2                  # Start with 2; HPA will scale up to 10
+  selector:
+    matchLabels:
+      app: tus-server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 0        # Zero-downtime rolling deploys
+  template:
+    metadata:
+      labels:
+        app: tus-server
+    spec:
+      containers:
+        - name: tus-server
+          image: transcoder/tus-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 1081
+              name: tus
+          envFrom:
+            - configMapRef:
+                name: transcoder-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: transcoder-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: transcoder-secrets
+                  key: REDIS_URL
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: transcoder-secrets
+                  key: RABBITMQ_URL
+            - name: CLOUDFLARE_R2_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: transcoder-secrets
+                  key: CLOUDFLARE_R2_ACCOUNT_ID
+            - name: CLOUDFLARE_R2_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: transcoder-secrets
+                  key: CLOUDFLARE_R2_ACCESS_KEY_ID
+            - name: CLOUDFLARE_R2_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: transcoder-secrets
+                  key: CLOUDFLARE_R2_SECRET_ACCESS_KEY
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 1081
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 1081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "2000m"     # Allow burst CPU for large chunk processing
+              memory: "1Gi"
+---
+# ── tus-server Service (ClusterIP — fronted by Ingress) ──────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: tus-server
+  namespace: transcoder
+  labels:
+    app: tus-server
+spec:
+  selector:
+    app: tus-server
+  ports:
+    - port: 1081
+      targetPort: 1081
+      name: tus
+---
+# ── HorizontalPodAutoscaler for tus-server ────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: tus-server-hpa
+  namespace: transcoder
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: tus-server
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
