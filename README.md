@@ -1,159 +1,105 @@
-# Turborepo starter
+# Transcoder
 
-This Turborepo starter is maintained by the Turborepo core team.
+Transcoder is a self-hosted, asynchronous video-upload and transcoding platform. It accepts resumable uploads, stores source and intermediate media in Cloudflare R2, creates multiple output resolutions with FFmpeg, and publishes live progress to the web dashboard.
 
-## Using this example
+## Architecture
 
-Run the following command:
+```mermaid
+flowchart LR
+  B[Browser / Next.js web] -->|Auth, video list, SSE| API[HTTP server]
+  B -->|TUS 1.0 resumable upload| TUS[TUS server]
 
-```sh
-npx create-turbo@latest
+  API --> PG[(PostgreSQL)]
+  API --> R2[(Cloudflare R2)]
+  API --> Redis[(Redis)]
+
+  TUS --> PG
+  TUS --> R2
+  TUS -->|chunk job| MQ[(RabbitMQ)]
+
+  MQ --> W[Chunk worker]
+  W --> R2
+  W -->|transcode job| MQ
+  MQ --> TC[Transcoder worker]
+  TC --> R2
+  TC -->|merge job| MQ
+  MQ --> M[Merger worker]
+  M --> R2
+  M -->|database update| MQ
+  MQ --> DBW[Database worker]
+  DBW --> PG
+  DBW --> Redis
+  Redis -->|progress events| API
+  API -->|Server-Sent Events| B
 ```
 
-## What's inside?
+The browser uses the HTTP API for authentication, video records, and progress events. Large media uploads use the TUS server directly, so an interrupted upload can resume with the same upload URL and offset.
 
-This Turborepo includes the following packages/apps:
+PostgreSQL is the durable source of truth for users, videos, and generated formats. Redis holds short-lived progress and cancellation state. RabbitMQ separates each CPU- and I/O-intensive stage so upload traffic is not blocked by FFmpeg work. Cloudflare R2 stores original files, chunks, intermediate renditions, and final media.
 
-### Apps and Packages
+## How a video is processed
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+A video upload is created through the TUS server. The server accepts `POST`, `HEAD`, `PATCH`, and `DELETE` requests from the TUS protocol, tracks the upload offset, and writes uploaded data to R2. When the upload is complete, it records the video and publishes a chunking job to RabbitMQ.
 
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
+The chunk worker downloads the source from R2, splits it into processing chunks, updates progress in Redis, and publishes a transcoding job. The transcoder worker runs FFmpeg for the requested output resolutions. The merger worker concatenates each resolution into a final MP4, uploads it to R2, and publishes a completion event. Finally, the database worker persists output URLs and status, clears temporary progress, and makes the completed video visible in the dashboard.
 
-### Utilities
+Users can cancel in-progress processing, and the services clear the associated transient Redis state. Worker failures are retried through RabbitMQ; persistent failures can be directed to the dead-letter queue for inspection.
 
-This Turborepo has some additional tools already setup for you:
+## Components
 
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
+| Component | Responsibility |
+| --- | --- |
+| `apps/web` | Next.js dashboard, authentication UI, Uppy/TUS upload client, progress and output views |
+| `apps/http-server` | Axum REST API for authentication, video metadata, signed R2 multipart operations, and Server-Sent Events |
+| `apps/tus-server` | TUS 1.0 resumable-upload endpoint and upload-job publisher |
+| `apps/worker` | Source-file chunking and chunk-job processing |
+| `apps/transcoder` | FFmpeg transcoding into requested resolutions |
+| `apps/merger` | Concatenates transcoded chunks and uploads final media |
+| `apps/db-worker` | Applies asynchronous status/output updates and publishes progress state |
+| `packages/db` | Diesel models, migrations, and PostgreSQL connection pool |
+| `packages/redis-conn` | Redis pools plus progress and cancellation helpers |
+| `packages/rabbitmq-conn` | Durable RabbitMQ connection and queue declarations |
+| `packages/s3-conn` | Cloudflare R2/S3-compatible client configuration |
 
-### Build
+## Queues and state
 
-To build all apps and packages, run the following command:
+The pipeline uses durable RabbitMQ queues. The default names are `chunk-queue`, `transcode-jobs`, `merge-jobs`, `db-updates`, and `dead-letter-queue`. Queue names may be configured per deployment, but every producer and consumer for a stage must use the same name.
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+Redis is not the source of truth for completed video data. It is used for live progress, cancellation, and short-lived coordination. The database worker persists the final state in PostgreSQL, which is what the API returns after a reconnect or restart.
 
-```sh
-cd my-turborepo
-turbo build
+## Local development
+
+Requirements: Rust stable, Bun, Docker Compose, FFmpeg, PostgreSQL, Redis, RabbitMQ, and Cloudflare R2-compatible development credentials.
+
+Create local environment files from the checked-in examples. Do not commit `.env` files or production credentials.
+
+```bash
+docker compose up --build
 ```
 
-Without global `turbo`, use your package manager:
+Common local endpoints:
 
-```sh
-cd my-turborepo
-npx turbo build
-bun dlx turbo build
-bun exec turbo build
+- Web dashboard: `http://localhost:3000`
+- HTTP API: `http://localhost:3001`
+- TUS upload endpoint: `http://localhost:1081/files/`
+
+Run the frontend separately when you need hot reload:
+
+```bash
+bun install
+bun --cwd apps/web dev
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+## Validation
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+Run focused checks before opening a pull request:
 
-```sh
-turbo build --filter=docs
+```bash
+cargo check --workspace
+cargo test --workspace
+bun --cwd apps/web run lint
+bun --cwd apps/web run build
+docker compose config
 ```
 
-Without global `turbo`:
-
-```sh
-npx turbo build --filter=docs
-bun exec turbo build --filter=docs
-bun exec turbo build --filter=docs
-```
-
-### Develop
-
-To develop all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo dev
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo dev
-bun exec turbo dev
-bun exec turbo dev
-```
-
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo dev --filter=web
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo dev --filter=web
-bun exec turbo dev --filter=web
-bun exec turbo dev --filter=web
-```
-
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo login
-bun exec turbo login
-bun exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-bun exec turbo link
-bun exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+The worker services require access to Redis, RabbitMQ, PostgreSQL, R2, and FFmpeg for end-to-end testing. Unit and compile checks do not upload media or alter production infrastructure.
