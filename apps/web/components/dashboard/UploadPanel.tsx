@@ -56,7 +56,7 @@ export default function UploadPanel({ onUploadComplete, onFilesChange }: UploadP
           "video/*",
           ".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v",
         ],
-        maxFileSize: 50 * 1024 * 1024 * 1024, // 50 GB
+        maxFileSize: 5 * 1024 * 1024 * 1024, // 5 GB
       },
     });
 
@@ -246,6 +246,7 @@ export default function UploadPanel({ onUploadComplete, onFilesChange }: UploadP
         .uppy-Dashboard-inner,
         .uppy-Dashboard-innerWrap,
         .uppy-Dashboard-AddFilesPanel,
+        .uppy-Dashboard-AddFiles,
         .uppy-Dashboard-files,
         .uppy-Dashboard-Item,
         .uppy-DashboardItem,
@@ -253,9 +254,26 @@ export default function UploadPanel({ onUploadComplete, onFilesChange }: UploadP
           width: 100% !important;
           max-width: 100% !important;
         }
-        .uppy-Dashboard-inner {
+        .uppy-Dashboard-inner,
+        .uppy-Dashboard-innerWrap,
+        .uppy-Dashboard-AddFilesPanel,
+        .uppy-Dashboard-AddFiles {
           height: 100% !important;
           min-height: 550px !important;
+        }
+        /* Make the entire drop area clickable by stretching the browse button's hit area */
+        .uppy-Dashboard-AddFiles {
+          position: relative !important;
+        }
+        .uppy-Dashboard-AddFiles-title {
+          position: static !important;
+        }
+        .uppy-Dashboard-browse::after {
+          content: "";
+          position: absolute;
+          top: 0; left: 0; right: 0; bottom: 0;
+          cursor: pointer;
+          z-index: 10;
         }
       `}} />
     </div>

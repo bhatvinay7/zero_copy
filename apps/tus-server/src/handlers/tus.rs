@@ -13,8 +13,9 @@ use db::create_video;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Maximum allowed upload size: 10 GiB
-const TUS_MAX_SIZE: u64 = 10 * 1024 * 1024 * 1024;
+/// Maximum allowed upload size: 5 GiB
+const TUS_MAX_SIZE: u64 = 5 * 1024 * 1024 * 1024;
+const TUS_VERSION: &str = "1.0.0";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CompletedPartInput {
@@ -373,9 +374,10 @@ async fn on_upload_complete(
     };
     let payload = serde_json::to_value(&payload).unwrap();
     if let Ok(channel) = state.rabbitmq.create_channel().await {
+        let chunk_queue = rabbitmq_conn::get_chunk_queue();
         let _ = state
             .rabbitmq
-            .publish(&channel, "", "chunk-queue", payload.to_string().as_bytes())
+            .publish(&channel, "", &chunk_queue, payload.to_string().as_bytes())
             .await;
     }
 
