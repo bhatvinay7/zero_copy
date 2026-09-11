@@ -89,7 +89,14 @@ async fn main() {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers(tower_http::cors::Any)
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            HeaderName::from_static("upload-length"),
+            HeaderName::from_static("upload-metadata"),
+            HeaderName::from_static("upload-offset"),
+            HeaderName::from_static("tus-resumable"),
+        ])
         .expose_headers([
             header::LOCATION,
             HeaderName::from_static("upload-offset"),

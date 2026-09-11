@@ -334,7 +334,7 @@ function JobRow({
                     <Video size={14} /> Video Preview
                   </div>
                   {/* Select highest resolution for preview by default (e.g. index 0 assuming it's sorted) */}
-                  <VideoPlayer url={job?.resolutions?.[0]?.url || ""} />
+                  <VideoPlayer url={job.resolutions[0].url} />
                 </div>
               )}
 

@@ -10,5 +10,5 @@ members = [
   "packages/redis-conn",
   "packages/rabbitmq-conn",
   "packages/s3-conn"
-, "apps/gateway"]
+]
 resolver = "2"

@@ -103,37 +103,6 @@ export function useCancelVideo() {
   });
 }
 
-export function useDeleteVideo() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string) => {
-      const res = await fetch(`${BASE_URL}/videos/${id}`, {
-        method: 'DELETE',
-        headers: getHeaders(),
-      });
-      if (!res.ok) throw new Error('Failed to delete video');
-      return res.json();
-    },
-    onMutate: async (id) => {
-      await queryClient.cancelQueries({ queryKey: ['videos'] });
-      const previousVideos = queryClient.getQueryData<Job[]>(['videos']);
-      queryClient.setQueryData<Job[]>(['videos'], (old) => {
-        if (!old) return old;
-        return old.filter(v => v.id !== id);
-      });
-      return { previousVideos };
-    },
-    onError: (err, id, context) => {
-      if (context?.previousVideos) {
-        queryClient.setQueryData(['videos'], context.previousVideos);
-      }
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['videos'] });
-    },
-  });
-}
-
 export function useLogin() {
   return useMutation({
     mutationFn: async (credentials: any) => {

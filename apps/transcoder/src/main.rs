@@ -57,8 +57,23 @@ async fn run_transcoder() -> Result<()> {
 
     // Setup RabbitMQ connection
     let rabbit_url = std::env::var("RABBITMQ_URL").unwrap_or_else(|_| "amqp://127.0.0.1:5672/%2f".to_string());
-    let rabbit_client = rabbitmq_conn::RabbitMQClient::new_and_wait(&rabbit_url).await;
-    let channel = rabbit_client.create_channel().await.context("Failed to create RabbitMQ channel")?;
+    
+    let mut backoff = std::time::Duration::from_secs(1);
+    let rabbit_conn = loop {
+        match Connection::connect(&rabbit_url, ConnectionProperties::default()).await {
+            Ok(conn) => {
+                log::info!("Successfully connected to RabbitMQ");
+                break conn;
+            }
+            Err(e) => {
+                log::error!("Failed to connect to RabbitMQ: {}. Retrying in {}s...", e, backoff.as_secs());
+                tokio::time::sleep(backoff).await;
+                backoff = std::cmp::min(backoff * 2, std::time::Duration::from_secs(30));
+            }
+        }
+    };
+
+    let channel = rabbit_conn.create_channel().await.context("Failed to create RabbitMQ channel")?;
     let _ = rabbitmq_conn::RabbitMQClient::declare_standard_queues(&channel).await?;
 
     // Setup S3 Config from s3-conn package
@@ -70,17 +85,15 @@ async fn run_transcoder() -> Result<()> {
     let semaphore = Arc::new(Semaphore::new(3));
     let registry = SharedRegistry::new();
 
-    let transcode_queue = rabbitmq_conn::get_transcode_queue();
-
     let mut consumer = channel
         .basic_consume(
-            &transcode_queue,
+            "transcode-jobs",
             "transcoder-worker",
             BasicConsumeOptions::default(),
             FieldTable::default(),
         )
         .await
-        .context("Failed to start RabbitMQ consume")?;
+        .context("Failed to start RabbitMQ transcode-jobs consume")?;
 
     log::info!("Consuming transcode jobs with concurrency limit 3...");
 
