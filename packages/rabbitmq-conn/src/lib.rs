@@ -12,10 +12,33 @@ pub struct RabbitMQClient {
     conn: Arc<RwLock<Option<Connection>>>,
 }
 
+pub fn get_chunk_queue() -> String {
+    std::env::var("QUEUE_CHUNK").unwrap_or_else(|_| "chunk-queue".to_string())
+}
+
+pub fn get_transcode_queue() -> String {
+    std::env::var("QUEUE_TRANSCODE").unwrap_or_else(|_| "transcode-jobs".to_string())
+}
+
+pub fn get_db_updates_queue() -> String {
+    std::env::var("QUEUE_DB_UPDATES").unwrap_or_else(|_| "db-updates".to_string())
+}
+
+pub fn get_merge_queue() -> String {
+    std::env::var("QUEUE_MERGE").unwrap_or_else(|_| "merge-jobs".to_string())
+}
+
+pub fn get_dlq() -> String {
+    std::env::var("QUEUE_DLQ").unwrap_or_else(|_| "dead-letter-queue".to_string())
+}
+
 impl RabbitMQClient {
     /// Creates a new RabbitMQ client that connects in the background.
     /// Returns immediately without blocking.
     pub fn new(uri: &str) -> Self {
+        // Ensure crypto provider is installed for RabbitMQ's rustls backend
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
         let client = Self {
             conn: Arc::new(RwLock::new(None)),
         };
@@ -65,6 +88,18 @@ impl RabbitMQClient {
         client
     }
 
+    /// Creates a new RabbitMQ client and blocks until the first successful connection.
+    pub async fn new_and_wait(uri: &str) -> Self {
+        let client = Self::new(uri);
+        loop {
+            if client.conn.read().await.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        client
+    }
+
     /// Creates a new channel.
     pub async fn create_channel(&self) -> Result<Channel> {
         let conn_guard = self.conn.read().await;
@@ -91,26 +126,31 @@ impl RabbitMQClient {
 
     /// Declares all standard queues used in the transcoding pipeline.
     pub async fn declare_standard_queues(channel: &Channel) -> Result<()> {
-        let queues = [
-            "chunk-queue",
-            "transcode-jobs",
-            "db-updates",
-            "merge-jobs",
-            "dead-letter-queue",
+        let chunk_queue = get_chunk_queue();
+        let transcode_queue = get_transcode_queue();
+        let db_updates = get_db_updates_queue();
+        let merge_jobs = get_merge_queue();
+        let dlq = get_dlq();
+
+        let queues = vec![
+            chunk_queue,
+            transcode_queue,
+            db_updates,
+            merge_jobs,
+            dlq,
         ];
 
-        for queue in queues {
+        for q in queues {
             let mut options = QueueDeclareOptions::default();
             options.durable = true;
-            
-            let _ = channel
+            channel
                 .queue_declare(
-                    queue,
+                    &q,
                     options,
                     FieldTable::default(),
                 )
                 .await
-                .with_context(|| format!("Failed to declare standard queue: {}", queue))?;
+                .context(format!("Failed to auto-declare queue: {}", q))?;
         }
         Ok(())
     }
