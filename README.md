@@ -45,6 +45,32 @@ The chunk worker downloads the source from R2, splits it into processing chunks,
 
 Users can cancel in-progress processing, and the services clear the associated transient Redis state. Worker failures are retried through RabbitMQ; persistent failures can be directed to the dead-letter queue for inspection.
 
+## Critical paths and reliability
+
+### R2 media movement
+
+R2 is the durable media store at every processing boundary. The worker writes source segments under `chunks/<video-id>/chunk_<n>.mp4`; each transcoder writes its rendition under `transcoded/<video-id>/<resolution>/chunk_<n>.mp4`; and the merger writes the completed asset under `final/<video-id>/<resolution>.mp4`. Local files are temporary worker scratch data and are deleted after successful upload or merge.
+
+The object keys are deterministic. If an at-least-once delivery repeats work after a worker restart, the same key is rewritten instead of creating another media object. PostgreSQL, not Redis, remains the durable record of completed output URLs.
+
+### Independent chunk processing
+
+After source chunking, every `(video ID, resolution, chunk index)` combination is an independent transcode job. For example, 20 input chunks requested at five resolutions create 100 jobs that can run across worker replicas. The transcoder has a local concurrency limit so one process does not exhaust CPU or disk, while RabbitMQ distributes the remaining jobs to available consumers.
+
+The database worker records each completed chunk index in a Redis set scoped to the video and resolution. When the set contains the expected number of distinct chunk indexes, it publishes a merge job for that resolution. This allows one missing or failed chunk to block only its own rendition, rather than the entire pipeline.
+
+### Ordered merge
+
+Merge work is deliberately not parallel within one final rendition. The merger downloads `chunk_1` through `chunk_n` in numeric order, builds an FFmpeg concat manifest, and uses stream copy (`-c copy`) to create the final MP4 without another full encode.
+
+For stream-copy concatenation to be reliable, all chunks for one resolution must have compatible codecs, stream layout, time base, and encoding settings. Source segments should also start at keyframes; otherwise a player can show artifacts or timing discontinuities at a chunk boundary. This is a media-validity requirement, not something RabbitMQ can correct.
+
+### Retry and dead-letter behavior
+
+Chunking, transcoding, merging, and database-update consumers track retry counts in Redis. A failed job is requeued up to three times; after the limit, the worker publishes a diagnostic payload to `dead-letter-queue` and acknowledges the source message. RabbitMQ connection establishment uses exponential backoff from one to thirty seconds.
+
+The system is at-least-once, not exactly-once: a process can publish downstream work and crash before acknowledging its own message. Deterministic R2 keys and Redis sets reduce duplicate effects, but consumers must remain idempotent. The merge trigger should be protected by an atomic `SET NX`-style "merge started" key so repeated completion events cannot schedule duplicate merge jobs. Retries are currently immediate; a delayed retry queue is preferable in production to prevent rapid retries against an unavailable dependency.
+
 ## Components
 
 | Component | Responsibility |
