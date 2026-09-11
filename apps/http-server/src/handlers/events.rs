@@ -85,6 +85,79 @@ pub async fn cancel_video_handler(
     ))
 }
 
+pub async fn delete_video_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(video_id): Path<i32>,
+) -> Result<impl IntoResponse, AppError> {
+    let mut db_conn = state.db_pool.get().map_err(|e| AppError::Internal(e.into()))?;
+
+    // 1. Fetch video to verify ownership and get original_url
+    let video = db::get_video_by_id(&mut db_conn, video_id)
+        .map_err(|_| AppError::NotFound("Video not found".into()))?;
+
+    if video.user_id != claims.sub {
+        return Err(AppError::Unauthorized("Not owner".into()));
+    }
+
+    // 2. Delete from DB
+    db::delete_video_by_id(&mut db_conn, video_id)
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    // 3. Delete original uploaded video from R2 (s3_key is original_url)
+    if !video.original_url.is_empty() {
+        let _ = state.s3_client.delete_object()
+            .bucket(&state.s3_bucket)
+            .key(&video.original_url)
+            .send()
+            .await;
+    }
+
+    // 4. We can't use S3Config helper here since we only have raw s3_client,
+    // so we'll delete prefixes using pagination directly for chunks, transcoded, and final.
+    let prefixes = [
+        format!("chunks/{}/", video_id),
+        format!("transcoded/{}/", video_id),
+        format!("final/{}/", video_id),
+    ];
+
+    for prefix in prefixes {
+        let mut object_stream = state.s3_client
+            .list_objects_v2()
+            .bucket(&state.s3_bucket)
+            .prefix(&prefix)
+            .into_paginator()
+            .send();
+
+        while let Some(res) = object_stream.next().await {
+            if let Ok(page) = res {
+                for obj in page.contents() {
+                    if let Some(key) = obj.key() {
+                        let _ = state.s3_client.delete_object()
+                            .bucket(&state.s3_bucket)
+                            .key(key)
+                            .send()
+                            .await;
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Clean up Redis just in case
+    let _ = state.redis.cancel_video(video_id).await;
+    let _ = state.redis.clean_video_progress(video_id).await;
+
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true,
+            "message": "Video permanently deleted"
+        })),
+    ))
+}
+
+
 pub async fn get_videos_handler(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,

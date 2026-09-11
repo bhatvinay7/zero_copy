@@ -62,4 +62,35 @@ impl S3Config {
             public_url: endpoint_url,
         })
     }
+
+    /// Deletes a specific object by key
+    pub async fn delete_object(&self, key: &str) -> Result<()> {
+        self.client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await?;
+        Ok(())
+    }
+
+    /// Deletes all objects under a given prefix
+    pub async fn delete_prefix(&self, prefix: &str) -> Result<()> {
+        let mut object_stream = self.client
+            .list_objects_v2()
+            .bucket(&self.bucket)
+            .prefix(prefix)
+            .into_paginator()
+            .send();
+
+        while let Some(res) = object_stream.next().await {
+            let page = res?;
+            for obj in page.contents() {
+                if let Some(key) = obj.key() {
+                    let _ = self.delete_object(key).await;
+                }
+            }
+        }
+        Ok(())
+    }
 }

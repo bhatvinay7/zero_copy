@@ -6,7 +6,7 @@ use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use models::{NewUser, NewVideo, NewVideoFormat, User, Video, VideoFormat};
-use schema::users::dsl::{email, users};
+use schema::users::dsl::{id as u_id, email, users};
 use schema::video_formats::dsl::{video_formats, video_id as vf_vid};
 use schema::videos::dsl::{id as v_id, status as v_status, videos};
 
@@ -37,12 +37,20 @@ pub fn run_migrations(conn: &mut PgConnection) -> Result<()> {
 }
 
 pub fn get_user_by_email(conn: &mut PgConnection, user_email: &str) -> Result<Option<User>> {
-    let result = users
+    let user = users
         .filter(email.eq(user_email))
         .first::<User>(conn)
         .optional()
-        .context("Error loading user by email")?;
-    Ok(result)
+        .context("Error querying user by email")?;
+    Ok(user)
+}
+
+pub fn get_user_by_id(conn: &mut PgConnection, user_id: i32) -> Result<User> {
+    let user = users
+        .filter(u_id.eq(user_id))
+        .first::<User>(conn)
+        .context("Error querying user by id")?;
+    Ok(user)
 }
 
 pub fn create_user(conn: &mut PgConnection, new_user: &NewUser) -> Result<User> {
@@ -59,6 +67,21 @@ pub fn create_video(conn: &mut PgConnection, new_video: &NewVideo) -> Result<Vid
         .get_result::<Video>(conn)
         .context("Error inserting new video record")?;
     Ok(created)
+}
+
+pub fn get_video_by_id(conn: &mut PgConnection, video_id: i32) -> Result<Video> {
+    let video = videos
+        .filter(v_id.eq(video_id))
+        .first::<Video>(conn)
+        .context("Error fetching video by id")?;
+    Ok(video)
+}
+
+pub fn delete_video_by_id(conn: &mut PgConnection, video_id: i32) -> Result<()> {
+    diesel::delete(videos.filter(v_id.eq(video_id)))
+        .execute(conn)
+        .context("Error deleting video")?;
+    Ok(())
 }
 
 pub fn update_video_status(

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useVideos, useCancelVideo, useLogin, useSignup } from "../../lib/api";
+import { useVideos, useCancelVideo, useDeleteVideo, useLogin, useSignup } from "../../lib/api";
 import { Bell, Search, Menu, LogOut, Lock, User, FileVideo, RefreshCw, XCircle } from "lucide-react";
 import Sidebar from "../../components/dashboard/Sidebar";
 import Overview from "../../components/dashboard/Overview";
@@ -28,6 +28,7 @@ export default function DashboardPage() {
   const queryClient = useQueryClient();
   const { data: fetchedJobs, refetch } = useVideos(token);
   const { mutateAsync: cancelVideo } = useCancelVideo();
+  const { mutateAsync: deleteVideo } = useDeleteVideo();
   const { mutateAsync: loginApi } = useLogin();
   const { mutateAsync: signupApi } = useSignup();
 
@@ -52,12 +53,12 @@ export default function DashboardPage() {
     async (id: string) => {
       if (!token) return;
       try {
-        await cancelVideo(id);
+        await deleteVideo(id);
       } catch (err) {
-        console.error("Failed to cancel transcode job:", err);
+        console.error("Failed to delete transcode job:", err);
       }
     },
-    [token, cancelVideo]
+    [token, deleteVideo]
   );
 
   // ── 5. Auth Handlers ──────────────────────────────────────────────────

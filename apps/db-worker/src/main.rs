@@ -35,27 +35,19 @@ async fn run_db_worker() -> Result<()> {
     // Setup RabbitMQ connection
     let rabbit_url = std::env::var("RABBITMQ_URL").unwrap_or_else(|_| "amqp://127.0.0.1:5672/%2f".to_string());
     
-    let mut backoff = std::time::Duration::from_secs(1);
-    let rabbit_conn = loop {
-        match Connection::connect(&rabbit_url, ConnectionProperties::default()).await {
-            Ok(conn) => {
-                log::info!("Successfully connected to RabbitMQ");
-                break conn;
-            }
-            Err(e) => {
-                log::error!("Failed to connect to RabbitMQ: {}. Retrying in {}s...", e, backoff.as_secs());
-                tokio::time::sleep(backoff).await;
-                backoff = std::cmp::min(backoff * 2, std::time::Duration::from_secs(30));
-            }
-        }
-    };
+    let rabbit_client = rabbitmq_conn::RabbitMQClient::new_and_wait(&rabbit_url).await;
 
-    let channel = rabbit_conn.create_channel().await.context("Failed to create RabbitMQ channel")?;
+    // Setup S3 Config from s3-conn package
+    let s3_config = Arc::new(s3_conn::S3Config::new().await.expect("Failed to initialize S3 config"));
+
+    let channel = rabbit_client.create_channel().await.context("Failed to create RabbitMQ channel")?;
     let _ = rabbitmq_conn::RabbitMQClient::declare_standard_queues(&channel).await?;
+
+    let db_updates_queue = rabbitmq_conn::get_db_updates_queue();
 
     let mut consumer = channel
         .basic_consume(
-            "db-updates",
+            &db_updates_queue,
             "db-update-worker",
             BasicConsumeOptions::default(),
             FieldTable::default(),
@@ -96,7 +88,7 @@ async fn run_db_worker() -> Result<()> {
                     log::info!("Processing MergeComplete for video_id: {} resolution: {}", video_id, resolution);
                     (
                         format!("video_{}_merge_{}", video_id, resolution),
-                        handle_merge_complete(video_id, user_id, resolution, url, &db_pool, &redis_client, &redis_pool).await
+                        handle_merge_complete(video_id, user_id, resolution, url, &db_pool, &redis_client, &redis_pool, &s3_config).await
                     )
                 }
             };
@@ -206,6 +198,7 @@ async fn handle_merge_complete(
     db_pool: &DbPool,
     redis_client: &redis_conn::RedisClient,
     redis_pool: &redis_conn::bb8::Pool<redis_conn::bb8_redis::RedisConnectionManager>,
+    s3_config: &s3_conn::S3Config,
 ) -> Result<()> {
     let mut db_conn = db_pool.get()?;
     
@@ -240,6 +233,15 @@ async fn handle_merge_complete(
         
         let _ = redis_client.clean_video_progress(video_id).await;
         
+        // Cleanup intermediate input chunks in R2 to save space
+        let chunk_prefix = format!("chunks/{}/", video_id);
+        log::info!("Deleting intermediate input chunks from R2 at prefix: {}", chunk_prefix);
+        if let Err(e) = s3_config.delete_prefix(&chunk_prefix).await {
+            log::error!("Failed to clean up input chunks for video {}: {:?}", video_id, e);
+        } else {
+            log::info!("Successfully deleted input chunks for video {}", video_id);
+        }
+
         // Force a 100% SSE event so the frontend knows to finish!
         let payload = serde_json::json!({
             "user_id": user_id,
@@ -253,6 +255,7 @@ async fn handle_merge_complete(
     
     Ok(())
 }
+
 
 async fn handle_processing_start(
     video_id: i32,

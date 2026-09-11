@@ -5,7 +5,7 @@ use http_server::{handlers, middleware, AppState};
 use axum::{
     http::{header, Method},
     middleware as axum_middleware,
-    routing::{get, post},
+    routing::{get, post, delete},
     Router,
 };
 
@@ -58,7 +58,7 @@ async fn main() {
     // Setup CORS
     let cors = CorsLayer::new()
         .allow_origin(tower_http::cors::Any)
-        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::HEAD, Method::OPTIONS])
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::HEAD, Method::OPTIONS, Method::DELETE])
         .allow_headers([
             header::CONTENT_TYPE,
             header::AUTHORIZATION,
@@ -78,6 +78,7 @@ async fn main() {
                 .route("/api/r2/abort-multipart", post(abort_multipart_handler))
                 .route("/api/videos/events", get(handlers::events::sse_progress_handler))
                 .route("/api/videos/:id/cancel", post(handlers::events::cancel_video_handler))
+                .route("/api/videos/:id", delete(handlers::events::delete_video_handler))
                 .route("/api/videos", get(handlers::events::get_videos_handler))
                 .route_layer(axum_middleware::from_fn(auth_guard))
         )
