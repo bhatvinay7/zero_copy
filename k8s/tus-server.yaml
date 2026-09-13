@@ -1,4 +1,4 @@
-# ── tus-server Deployment ─────────────────────────────────────────────────────
+# ── tus-server Deployment
 # Independently scalable — no sticky sessions needed (state in Redis).
 # Scale: kubectl scale deployment tus-server --replicas=5 -n transcoder
 apiVersion: apps/v1
@@ -84,7 +84,7 @@ spec:
               cpu: "2000m"     # Allow burst CPU for large chunk processing
               memory: "1Gi"
 ---
-# ── tus-server Service (ClusterIP — fronted by Ingress) ──────────────────────
+# ── tus-server Service (ClusterIP — fronted by Ingress)
 apiVersion: v1
 kind: Service
 metadata:
@@ -100,7 +100,7 @@ spec:
       targetPort: 1081
       name: tus
 ---
-# ── HorizontalPodAutoscaler for tus-server ────────────────────────────────────
+# ── HorizontalPodAutoscaler for tus-server
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

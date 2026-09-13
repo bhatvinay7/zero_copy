@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: transcoder
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+      - name: gateway
+        image: registry.internal/transcoder/gateway:latest
+        ports:
+        - containerPort: 1080
+        env:
+        - name: REDIS_URL
+          value: "redis://redis-service.transcoder.svc.cluster.local:6379"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: url
+        - name: RABBITMQ_URL
+          value: "amqp://rabbitmq.transcoder.svc.cluster.local:5672/"
+        - name: SHARED_TUS_URL
+          value: "http://tus-server.transcoder.svc.cluster.local:1081/files"
+        - name: RUST_LOG
+          value: "info"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: transcoder
+spec:
+  type: ClusterIP
+  selector:
+    app: gateway
+  ports:
+  - port: 1080
+    targetPort: 1080

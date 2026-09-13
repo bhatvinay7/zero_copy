@@ -41,3 +41,7 @@ yarn-error.log*
 # Rust
 /target
 **/target/
+
+# Keep all local environment files and templates out of Git.
+.env*
+*.env

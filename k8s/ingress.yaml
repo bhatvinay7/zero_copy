@@ -46,14 +46,14 @@ spec:
     - host: api.transcoder.example.com
       http:
         paths:
-          # TUS upload routes → tus-server (independently scalable, no sticky sessions)
+          # TUS upload routes → api-gateway (intercepts and scales dedicated pods)
           - path: /files
             pathType: Prefix
             backend:
               service:
-                name: tus-server
+                name: api-gateway
                 port:
-                  number: 1081
+                  number: 1080
 
           # All other routes → http-server (auth, videos, R2, Socket.io)
           - path: /
